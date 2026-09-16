@@ -10,7 +10,6 @@ from datetime import datetime
 
 st.set_page_config(page_title="아사히 마시나리 대시보드", layout="wide", initial_sidebar_state="expanded")
 
-# 🎨 [초강력 디자인 패치 2.0] 모던 폰트, 입체감, 여백, 차트 디테일 향상
 st.markdown("""
 <style>
 @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
@@ -47,7 +46,7 @@ st.title("🏭 한국 아사히 마시나리 - 통합 생산 대시보드")
 st.markdown("---")
 
 DB_FILE_PATH = "아사히_마스터_DB.csv"
-SETTINGS_FILE_PATH = "대시보드_검색기록.json" # ⭐️ 검색 기록을 저장할 메모장 파일
+SETTINGS_FILE_PATH = "대시보드_검색기록.json" 
 ACCOUNT_REGEX = re.compile(r'^(\d{4})[-_]*([A-Z]*)[-_]*(.*)$')
 SPLIT_REGEX = re.compile(r'[~_-]+')
 GEUNTAE_PATTERN = re.compile('휴가|조퇴|외출|지각|休|早退|外出|遲刻', flags=re.IGNORECASE)
@@ -55,7 +54,6 @@ GEUNTAE_PATTERN = re.compile('휴가|조퇴|외출|지각|休|早退|外出|遲�
 if "processed_file_names" not in st.session_state:
     st.session_state.processed_file_names = set()
 
-# ⭐️ 필터 설정을 불러오고 저장하는 함수
 def load_filter_settings():
     if os.path.exists(SETTINGS_FILE_PATH):
         try:
@@ -90,7 +88,7 @@ st.sidebar.subheader("🗑️ 마스터 DB 관리")
 st.sidebar.caption("데이터가 꼬였거나 베이스를 새로 구축할 때 사용하세요.")
 if st.sidebar.button("🚨 마스터 DB 전체 초기화 (삭제)"):
     if os.path.exists(DB_FILE_PATH): os.remove(DB_FILE_PATH)
-    if os.path.exists(SETTINGS_FILE_PATH): os.remove(SETTINGS_FILE_PATH) # DB 초기화 시 필터 기록도 같이 삭제
+    if os.path.exists(SETTINGS_FILE_PATH): os.remove(SETTINGS_FILE_PATH) 
     st.cache_data.clear()
     st.session_state.processed_file_names = set()
     try: st.rerun()
@@ -98,7 +96,7 @@ if st.sidebar.button("🚨 마스터 DB 전체 초기화 (삭제)"):
 
 dept_mapping = {'機械': '기계', '기계부': '기계', '電機': '전기', '전기부': '전기', '電裝': '전장', '전장부': '전장', '組立': '조립', '조립부': '조립', '設計': '설계', '설계부': '설계', '檢査': '검사', '검사부': '검사', '加工': '가공', '가공부': '가공', '制御': '제어', '제어부': '제어', '品質': '품질', '품질부': '품질'}
 worker_mapping = {'金雲石': '김운석', '朴振求': '박진구', '黃斗煥': '황두환', '李東在': '이동재', '李东在': '이동재', '李東宰': '이동재', '金映德': '김영덕', '金正吉': '김정길', '李哲珉': '이철민', '李哲民': '이철민', '李喆珉': '이철민', '金泰旻': '김태민', '丁海成': '정해성', '金建佑': '김건우', '金榮勳': '김영훈', '崔仁河': '최인하', '咸同圭': '함동규', '朴두리': '박두리', '黃纘赫': '황찬혁', '韓載壽': '한재수', '金泰賢': '김태현', '安成任': '안성임'}
-KOR_HOLIDAYS = ['2026-01-01', '2026-02-16', '2026-02-17', '2026-02-18', '2026-03-01', '2026-05-05', '2026-05-24', '2026-06-06', '2026-08-15', '2026-09-24', '2026-09-25', '2026-09-26', '2026-10-03', '2026-10-09', '2026-12-25', '2025-01-01', '2025-01-28', '2025-01-29', '2025-01-30', '2025-03-01', '2025-05-05', '2025-06-06', '2025-08-15', '2025-10-03', '2025-10-05', '2025-10-06', '2025-10-07', '2025-10-09', '2025-12-25']
+KOR_HOLIDAYS = {'2026-01-01', '2026-02-16', '2026-02-17', '2026-02-18', '2026-03-01', '2026-05-05', '2026-05-24', '2026-06-06', '2026-08-15', '2026-09-24', '2026-09-25', '2026-09-26', '2026-10-03', '2026-10-09', '2026-12-25', '2025-01-01', '2025-01-28', '2025-01-29', '2025-01-30', '2025-03-01', '2025-05-05', '2025-06-06', '2025-08-15', '2025-10-03', '2025-10-05', '2025-10-06', '2025-10-07', '2025-10-09', '2025-12-25'}
 
 def format_unmanned(val):
     try:
@@ -139,54 +137,57 @@ def generate_attendance_html(df):
     if df.empty: return ""
     agg = df.groupby(['작업자', '작업일자']).agg({'정규시간': 'sum', '잔업시간': 'sum'}).reset_index()
     dates = sorted(agg['작업일자'].unique())
+    dt_index = pd.to_datetime(dates)  # 날짜별로 개별 호출하지 않고 한 번에 벡터 변환
+    weekday_kr_arr = ['월', '화', '수', '목', '금', '토', '일']
     date_cols = []
     is_weekend = {}
-    for d in dates:
-        dt = pd.to_datetime(d)
-        weekday_kr = ['월', '화', '수', '목', '금', '토', '일'][dt.weekday()]
+    for d, dt in zip(dates, dt_index):
+        weekday_kr = weekday_kr_arr[dt.weekday()]
         col_name = f"{dt.month}/{dt.day}{weekday_kr}"
         date_cols.append((d, col_name))
         is_weekend[d] = dt.weekday() >= 5
     workers = sorted(agg['작업자'].unique())
     
-    html = """
+    # 작업자x날짜 조합마다 매번 pandas 필터링하는 대신 O(1) 조회용 딕셔너리로 미리 변환
+    lookup = agg.set_index(['작업자', '작업일자'])[['정규시간', '잔업시간']].to_dict('index')
+    
+    html_parts = ["""
     <div style='overflow-x: auto; background-color: #FFFFFF; border-radius: 16px; padding: 20px; box-shadow: 0px 4px 20px rgba(0,0,0,0.04); margin-bottom: 20px;'>
     <table style='border-collapse: separate; border-spacing: 0; width: 100%; text-align: center; font-size: 14px; font-family: "Pretendard", sans-serif; white-space: nowrap;'>
         <tr>
             <th style='border-bottom: 2px solid #E2E8F0; padding: 15px 10px; background-color: #F8FAFC; min-width: 80px; color: #475569; border-top-left-radius: 8px;'>이름</th>
-    """
+    """]
     for idx, (d, c) in enumerate(date_cols):
         bg = "#FFF5F5" if is_weekend[d] else "#F8FAFC"
         color = "#EF4444" if is_weekend[d] else "#475569"
-        html += f"<th style='border-bottom: 2px solid #E2E8F0; padding: 15px 10px; background-color: {bg}; color: {color};'>{c}</th>"
+        html_parts.append(f"<th style='border-bottom: 2px solid #E2E8F0; padding: 15px 10px; background-color: {bg}; color: {color};'>{c}</th>")
         
-    html += "<th style='border-bottom: 2px solid #E2E8F0; padding: 15px 10px; background-color: #F8FAFC; color: #475569; border-top-right-radius: 8px;'>합계(h)</th></tr>"
+    html_parts.append("<th style='border-bottom: 2px solid #E2E8F0; padding: 15px 10px; background-color: #F8FAFC; color: #475569; border-top-right-radius: 8px;'>합계(h)</th></tr>")
     
     for w in workers:
-        html += f"<tr><td style='border-bottom: 1px solid #F1F5F9; padding: 12px 10px; font-weight: 700; color: #1E293B;'>{w}</td>"
-        w_data = agg[agg['작업자'] == w]
+        html_parts.append(f"<tr><td style='border-bottom: 1px solid #F1F5F9; padding: 12px 10px; font-weight: 700; color: #1E293B;'>{w}</td>")
         total_sum = 0
         for d, c in date_cols:
             bg = "#FEF2F2" if is_weekend[d] else "#FFFFFF"
-            day_data = w_data[w_data['작업일자'] == d]
-            if day_data.empty: html += f"<td style='border-bottom: 1px solid #F1F5F9; background-color: {bg};'></td>"
+            day_data = lookup.get((w, d))
+            if day_data is None: html_parts.append(f"<td style='border-bottom: 1px solid #F1F5F9; background-color: {bg};'></td>")
             else:
-                reg = day_data['정규시간'].sum()
-                over = day_data['잔업시간'].sum()
+                reg = day_data['정규시간']
+                over = day_data['잔업시간']
                 total = reg + over
                 total_sum += total
-                if total == 0: html += f"<td style='border-bottom: 1px solid #F1F5F9; background-color: {bg};'></td>"
-                elif is_weekend[d]: html += f"<td style='border-bottom: 1px solid #F1F5F9; background-color: {bg}; font-weight: 700; color: #EF4444;'>{total:.2f}</td>"
+                if total == 0: html_parts.append(f"<td style='border-bottom: 1px solid #F1F5F9; background-color: {bg};'></td>")
+                elif is_weekend[d]: html_parts.append(f"<td style='border-bottom: 1px solid #F1F5F9; background-color: {bg}; font-weight: 700; color: #EF4444;'>{total:.2f}</td>")
                 else:
                     reg_str = f"{reg:.2f}" if reg > 0 else "-"
                     over_str = f"{over:.2f}" if over > 0 else "-"
-                    html += f"<td style='border-bottom: 1px solid #F1F5F9; background-color: {bg};'>"
-                    html += f"<div style='font-weight: 600; color: #334155; margin-bottom: 4px;'>{reg_str}</div>"
-                    if over > 0 or reg > 0: html += f"<div style='font-weight: 700; color: #3B82F6;'>{over_str}</div>"
-                    html += "</td>"
-        html += f"<td style='border-bottom: 1px solid #F1F5F9; font-weight: 800; background-color: #F8FAFC; color: #0F172A;'>{total_sum:.2f}</td></tr>"
-    html += "</table></div>"
-    return html
+                    html_parts.append(f"<td style='border-bottom: 1px solid #F1F5F9; background-color: {bg};'>")
+                    html_parts.append(f"<div style='font-weight: 600; color: #334155; margin-bottom: 4px;'>{reg_str}</div>")
+                    if over > 0 or reg > 0: html_parts.append(f"<div style='font-weight: 700; color: #3B82F6;'>{over_str}</div>")
+                    html_parts.append("</td>")
+        html_parts.append(f"<td style='border-bottom: 1px solid #F1F5F9; font-weight: 800; background-color: #F8FAFC; color: #0F172A;'>{total_sum:.2f}</td></tr>")
+    html_parts.append("</table></div>")
+    return "".join(html_parts)
 
 def apply_modern_chart_layout(fig, x_title, y_title, legend_title=""):
     fig.update_layout(
@@ -201,16 +202,14 @@ def apply_modern_chart_layout(fig, x_title, y_title, legend_title=""):
     fig.update_traces(marker_line_width=0)
     return fig
 
-# ⭐️ 필터 저장 로직이 결합된 렌더링 함수
 def render_tab_filters(tab_id, df):
-    # 1. 파일에서 이전 검색 기록 불러오기
     global_settings = load_filter_settings()
     tab_settings = global_settings.get(tab_id, {})
     
-    min_date = pd.to_datetime(df['작업일자']).min().date()
-    max_date = pd.to_datetime(df['작업일자']).max().date()
+    work_dates = pd.to_datetime(df['작업일자'])
+    min_date = work_dates.min().date()
+    max_date = work_dates.max().date()
     
-    # 2. 이전에 저장된 날짜가 유효한지 검사해서 기본값으로 세팅
     def_start_str = tab_settings.get("start_date", str(min_date))
     def_end_str = tab_settings.get("end_date", str(max_date))
     def_start = max(min_date, min(pd.to_datetime(def_start_str).date(), max_date))
@@ -220,7 +219,6 @@ def render_tab_filters(tab_id, df):
     worker_options = sorted(df['작업자'].dropna().unique().tolist())
     acc_options = sorted(df['구좌명'].dropna().unique().tolist())
     
-    # 3. 이전에 저장된 선택 항목들(부서, 작업자 등) 중 현재 DB에 있는 것만 남기기
     def_dept = [x for x in tab_settings.get("dept", []) if x in dept_options]
     def_worker = [x for x in tab_settings.get("worker", []) if x in worker_options]
     def_acc = [x for x in tab_settings.get("acc", []) if x in acc_options]
@@ -234,7 +232,6 @@ def render_tab_filters(tab_id, df):
     with col_worker: worker_search = st.multiselect("👷 작업자 선택", options=worker_options, default=def_worker, placeholder="전체 (클릭하여 검색)", key=f"worker_{tab_id}")
     with col_acc: account_search = st.multiselect("⚙️ 구좌명 선택", options=acc_options, default=def_acc, placeholder="전체 (클릭하여 검색)", key=f"acc_{tab_id}")
         
-    # 4. 현재 선택된 검색 조건을 기록 파일에 저장 (바뀌었을 때만)
     current_state = {
         "start_date": str(start_d),
         "end_date": str(end_d),
@@ -247,7 +244,8 @@ def render_tab_filters(tab_id, df):
         save_filter_settings(global_settings)
         
     filtered_df = df.copy()
-    filtered_df = filtered_df[(pd.to_datetime(filtered_df['작업일자']).dt.date >= start_d) & (pd.to_datetime(filtered_df['작업일자']).dt.date <= end_d)]
+    work_dates_only = work_dates.dt.date
+    filtered_df = filtered_df[(work_dates_only >= start_d) & (work_dates_only <= end_d)]
         
     if dept_search: filtered_df = filtered_df[filtered_df['부서'].isin(dept_search)]
     if worker_search: filtered_df = filtered_df[filtered_df['작업자'].isin(worker_search)]
@@ -457,34 +455,42 @@ if not master_db.empty:
     with tab3:
         filtered_df_tab3 = render_tab_filters("특이근태현황", master_db)
         st.markdown("<h3 style='margin-bottom: 5px;'>🏖️ 작업자별 특이 근태 현황</h3>", unsafe_allow_html=True)
-        st.info("💡 **스마트 달력 적용됨:** 주말(토/일) 및 법정 공휴일에 발생한 '조퇴'는 특근 단축 근무로 간주하여 카운트에서 자동 제외됩니다.")
+        # ⭐️ 안내 문구 업데이트: 지각, 외출도 자동 제외됨을 명시
+        st.info("💡 **스마트 달력 적용됨:** 주말(토/일) 및 법정 공휴일에 발생한 '조퇴', '지각', '외출'은 특근 유연/단축 근무로 간주하여 카운트에서 자동 제외됩니다.")
         
         pattern = '휴가|조퇴|외출|지각|休|早退|外出|遲刻'
         df_geuntae = filtered_df_tab3[filtered_df_tab3['근태'].str.contains(pattern, case=False, na=False, regex=True)][['작업일자', '부서', '작업자', '근태']]
         df_geuntae = df_geuntae.drop_duplicates(subset=['작업일자', '작업자'], keep='first')
         
         if not df_geuntae.empty:
-            def get_g_type(row):
-                x_str = str(row['근태'])
-                dt_str = str(row['작업일자'])
-                dt = pd.to_datetime(dt_str)
-                is_weekend_holiday = (dt.weekday() >= 5) or (dt_str in KOR_HOLIDAYS)
+            # 행마다 개별적으로 pd.to_datetime()을 호출하지 않도록 주말/공휴일 여부를 미리 벡터 연산으로 계산
+            weekend_holiday_arr = (
+                (pd.to_datetime(df_geuntae['작업일자']).dt.weekday >= 5)
+                | (df_geuntae['작업일자'].astype(str).isin(KOR_HOLIDAYS))
+            ).to_numpy()
+
+            def get_g_type(x_str, is_weekend_holiday):
+                x_str = str(x_str)
+                # ⭐️ 주말/공휴일 예외 처리 로직 (조퇴, 지각, 외출 동일 적용)
                 if '휴가' in x_str or '休' in x_str: return '휴가'
-                elif '외출' in x_str or '外出' in x_str: return '외출'
-                elif '지각' in x_str or '遲刻' in x_str: return '지각'
-                elif '조퇴' in x_str or '早退' in x_str: return '주말/공휴일 조퇴(제외)' if is_weekend_holiday else '조퇴'
+                elif '외출' in x_str or '外出' in x_str: return '주말/공휴일 제외' if is_weekend_holiday else '외출'
+                elif '지각' in x_str or '遲刻' in x_str: return '주말/공휴일 제외' if is_weekend_holiday else '지각'
+                elif '조퇴' in x_str or '早退' in x_str: return '주말/공휴일 제외' if is_weekend_holiday else '조퇴'
                 return '기타'
-                
-            df_geuntae['근태 유형'] = df_geuntae.apply(get_g_type, axis=1)
-            df_geuntae = df_geuntae[~df_geuntae['근태 유형'].isin(['기타', '주말/공휴일 조퇴(제외)'])]
+
+            df_geuntae['근태 유형'] = [
+                get_g_type(x, wh) for x, wh in zip(df_geuntae['근태'], weekend_holiday_arr)
+            ]
+            # ⭐️ 주말/공휴일 제외 대상 필터링
+            df_geuntae = df_geuntae[~df_geuntae['근태 유형'].isin(['기타', '주말/공휴일 제외'])]
             
             if not df_geuntae.empty:
                 counts = df_geuntae['근태 유형'].value_counts()
                 c1, c2, c3, c4 = st.columns(4)
                 c1.metric("🌴 휴가", f"{counts.get('휴가', 0)} 건")
                 c2.metric("🏃 평일 조퇴", f"{counts.get('조퇴', 0)} 건")
-                c3.metric("🚶 외출", f"{counts.get('외출', 0)} 건")
-                c4.metric("⏰ 지각", f"{counts.get('지각', 0)} 건")
+                c3.metric("🚶 평일 외출", f"{counts.get('외출', 0)} 건")
+                c4.metric("⏰ 평일 지각", f"{counts.get('지각', 0)} 건")
                 
                 st.markdown("<br><hr style='border:1px solid #E2E8F0'><br>", unsafe_allow_html=True)
                 
@@ -502,7 +508,7 @@ if not master_db.empty:
                     st.dataframe(df_display, use_container_width=True)
                     st.markdown("</div>", unsafe_allow_html=True)
             else:
-                st.info("검색된 기간 내에 평일 조퇴, 휴가 등의 특이 근태 기록이 없습니다.")
+                st.info("검색된 기간 내에 평일 조퇴, 지각 등의 특이 근태 기록이 없습니다.")
         else:
             st.info("검색된 기간/조건 내에 특이 근태(휴가/조퇴/외출/지각) 기록이 한 건도 없습니다. 모두 성실하게 근무하셨네요! 👍")
 
