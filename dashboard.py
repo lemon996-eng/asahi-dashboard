@@ -14,15 +14,31 @@ st.set_page_config(page_title="아사히 마시나리 대시보드", layout="wid
 # 🎨 [안전한 모던 클린 CSS] 스트림릿 구조를 파괴하지 않는 타겟팅
 st.markdown("""
 <style>
-/* 📱 모바일 화면 전체 좌우 밀림 완벽 방지 */
-html, body, [data-testid="stAppViewContainer"], .main {
-    max-width: 100vw !important;
+/* 📱 모바일 화면 가로 밀림 완벽 차단 (3중 방어) */
+/* 1. 최상위 껍데기 제한 (100vw 대신 100% 사용으로 스크롤바 오차 제거) */
+html, body, .stApp, [data-testid="stAppViewContainer"], .main {
+    max-width: 100% !important;
     overflow-x: hidden !important;
 }
-* {
+
+/* 2. 스트림릿 내부 뼈대(블록)가 화면 밖으로 팽창하는 것 방지 */
+.block-container {
+    max-width: 100% !important;
+    overflow-x: hidden !important;
+}
+
+/* 3. 차트와 표(가장 잦은 원인)가 모바일 너비를 초과하지 못하도록 강제 고정 */
+.js-plotly-plot, .plotly, [class*="plotly"] {
+    max-width: 100% !important;
+}
+[data-testid="stDataFrame"], div[style*="overflow-x: auto"] {
+    width: 100% !important;
+    max-width: 100% !important;
     box-sizing: border-box !important;
 }
-@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
+* { 
+    box-sizing: border-box !important; 
+}
 
 /* 1. 전체 배경: 가장 안전한 뷰 컨테이너만 타겟팅 */
 [data-testid="stAppViewContainer"] { 
@@ -69,14 +85,22 @@ div[data-testid="stForm"], div.stDateInput > div > div > input, div[data-baseweb
     background-color: #FFFFFF !important;
 }
 
-/* 5. 데이터 프레임(표) 네이티브 디자인 */
+/* 5. 데이터 프레임(표) 네이티브 디자인 (이중 테두리 및 여백 제거) */
 [data-testid="stDataFrame"] {
     background-color: #FFFFFF !important;
     border-radius: 16px !important;
-    padding: 16px !important;
     box-shadow: 0px 4px 12px rgba(30, 41, 59, 0.05) !important;
-    border: 1px solid #E2E8F0 !important;
+    border: 1px solid #E2E8F0 !important; /* 바깥쪽 깔끔한 단일 테두리만 유지 */
+    padding: 0px !important; /* 💡 핵심: 안쪽 여백을 없애서 표를 테두리에 완전히 밀착시킴 */
+    overflow: hidden !important; /* 내부 표의 직각 모서리가 둥근 테두리 밖으로 삐져나오지 않게 절단 */
     margin-bottom: 20px !important;
+}
+
+/* 스트림릿 표 자체의 촌스러운 기본 2중 테두리 강제 삭제 */
+[data-testid="stDataFrame"] > div, 
+[data-testid="stDataFrame"] iframe {
+    border: none !important; 
+    border-radius: 16px !important;
 }
 hr { border-color: #E2E8F0 !important; margin: 2em 0 !important; }
 </style>
