@@ -14,6 +14,14 @@ st.set_page_config(page_title="아사히 마시나리 대시보드", layout="wid
 # 🎨 [안전한 모던 클린 CSS] 스트림릿 구조를 파괴하지 않는 타겟팅
 st.markdown("""
 <style>
+/* 📱 모바일 화면 전체 좌우 밀림 완벽 방지 */
+html, body, [data-testid="stAppViewContainer"], .main {
+    max-width: 100vw !important;
+    overflow-x: hidden !important;
+}
+* {
+    box-sizing: border-box !important;
+}
 @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
 
 /* 1. 전체 배경: 가장 안전한 뷰 컨테이너만 타겟팅 */
