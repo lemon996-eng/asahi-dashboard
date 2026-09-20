@@ -143,6 +143,10 @@ def load_filter_settings():
         except: 
             return {}
     return {}
+    def save_filter_settings(settings):
+    import json
+    with open(SETTINGS_FILE_PATH, "w", encoding="utf-8") as f:
+        json.dump(settings, f, ensure_ascii=False, indent=2)
 
 # 1. 파이어베이스 연결 설정 (비밀 열쇠 사용)
 @st.cache_resource
