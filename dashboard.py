@@ -129,10 +129,20 @@ BRAND_COLORS = ['#1E2772', '#A3E635', '#7C3AED', '#F59E0B', '#3B82F6', '#10B981'
 if "processed_file_names" not in st.session_state:
     st.session_state.processed_file_names = set()
 
+# 💡 검색 기록 파일이 손상되어도 에러 없이 통과하도록 안전장치(isinstance) 추가
 def load_filter_settings():
-    from google.cloud import firestore
-from google.oauth2 import service_account
-import json
+    if os.path.exists(SETTINGS_FILE_PATH):
+        try:
+            with open(SETTINGS_FILE_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                # 데이터가 정상적인 서랍장(dict) 형태일 때만 반환하고, 아니면 텅 빈 상태({})로 초기화
+                if isinstance(data, dict):
+                    return data
+                else:
+                    return {}
+        except: 
+            return {}
+    return {}
 
 # 1. 파이어베이스 연결 설정 (비밀 열쇠 사용)
 @st.cache_resource
