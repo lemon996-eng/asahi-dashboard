@@ -8,6 +8,9 @@ import os
 import unicodedata
 import json
 from datetime import datetime
+import json
+from google.cloud import firestore
+from google.oauth2 import service_account
 
 st.set_page_config(page_title="아사히 마시나리 대시보드", layout="wide", initial_sidebar_state="expanded")
 
@@ -127,27 +130,46 @@ if "processed_file_names" not in st.session_state:
     st.session_state.processed_file_names = set()
 
 def load_filter_settings():
-    if os.path.exists(SETTINGS_FILE_PATH):
-        try:
-            with open(SETTINGS_FILE_PATH, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except: return {}
-    return {}
+    from google.cloud import firestore
+from google.oauth2 import service_account
+import json
 
-def save_filter_settings(settings):
-    with open(SETTINGS_FILE_PATH, "w", encoding="utf-8") as f:
-        json.dump(settings, f, ensure_ascii=False, indent=2)
+# 1. 파이어베이스 연결 설정 (비밀 열쇠 사용)
+@st.cache_resource
+def init_firestore():
+    # secrets.toml에 넣어둔 열쇠 정보를 읽어옵니다.
+    key_dict = json.loads(st.secrets["firebase_key"])
+    creds = service_account.Credentials.from_service_account_info(key_dict)
+    return firestore.Client(credentials=creds, project=key_dict["project_id"])
 
+db = init_firestore()
+COLLECTION_NAME = "asahi_master_db"
+
+# 2. 클라우드에서 데이터 가져오기
 @st.cache_data(show_spinner=False)
 def load_master_db():
-    if os.path.exists(DB_FILE_PATH):
-        df = pd.read_csv(DB_FILE_PATH, dtype={'작업일자': str, '구좌명': str, '부서': str, '작업자': str, '근태': str})
-        df['근태'] = df['근태'].fillna('')
-        return df
-    else: return pd.DataFrame()
+    docs = db.collection(COLLECTION_NAME).stream()
+    data = [doc.to_dict() for doc in docs]
+    return pd.DataFrame(data) if data else pd.DataFrame()
 
+# 3. 클라우드에 데이터 안전하게 저장하기 (데이터 튕김 현상 완벽 방지)
 def save_master_db(df):
-    df.to_csv(DB_FILE_PATH, index=False, encoding='utf-8-sig')
+    import json
+    
+    # 💡 핵심: 파이썬 특유의 숫자 형식을 파이어베이스가 거부하지 않도록 순수 텍스트/숫자로 변환
+    cleaned_records = json.loads(df.to_json(orient="records", force_ascii=False))
+    
+    chunk_size = 400
+    for i in range(0, len(cleaned_records), chunk_size):
+        batch = db.batch()
+        chunk = cleaned_records[i:i+chunk_size]
+        for row in chunk:
+            doc_id = f"{row['작업일자']}_{row['작업자']}_{row['구좌명']}_{row['부서']}"
+            doc_ref = db.collection(COLLECTION_NAME).document(doc_id)
+            batch.set(doc_ref, row)
+        batch.commit()
+        
+    st.cache_data.clear()
 
 master_db = load_master_db()
 
