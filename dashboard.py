@@ -6,7 +6,6 @@ import plotly.graph_objects as go
 import re
 import os
 import unicodedata
-import json
 from datetime import datetime
 import json
 from google.cloud import firestore
@@ -14,23 +13,20 @@ from google.oauth2 import service_account
 
 st.set_page_config(page_title="아사히 마시나리 대시보드", layout="wide", initial_sidebar_state="expanded")
 
-# 🎨 [안전한 모던 클린 CSS] 스트림릿 구조를 파괴하지 않는 타겟팅
+# 🎨 [안전한 모던 클린 CSS] 모바일 흔들림 방지 및 표 테두리 제거 포함
 st.markdown("""
 <style>
+@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
+
 /* 📱 모바일 화면 가로 밀림 완벽 차단 (3중 방어) */
-/* 1. 최상위 껍데기 제한 (100vw 대신 100% 사용으로 스크롤바 오차 제거) */
 html, body, .stApp, [data-testid="stAppViewContainer"], .main {
     max-width: 100% !important;
     overflow-x: hidden !important;
 }
-
-/* 2. 스트림릿 내부 뼈대(블록)가 화면 밖으로 팽창하는 것 방지 */
 .block-container {
     max-width: 100% !important;
     overflow-x: hidden !important;
 }
-
-/* 3. 차트와 표(가장 잦은 원인)가 모바일 너비를 초과하지 못하도록 강제 고정 */
 .js-plotly-plot, .plotly, [class*="plotly"] {
     max-width: 100% !important;
 }
@@ -43,19 +39,17 @@ html, body, .stApp, [data-testid="stAppViewContainer"], .main {
     box-sizing: border-box !important; 
 }
 
-/* 1. 전체 배경: 가장 안전한 뷰 컨테이너만 타겟팅 */
+/* 1. 전체 배경 */
 [data-testid="stAppViewContainer"] { 
     background-color: #F3F4F8 !important; 
     font-family: 'Pretendard', sans-serif !important;
 }
-
 h1, h2, h3 { 
     color: #1A1A2E !important; 
     font-weight: 800 !important; 
     letter-spacing: -0.5px !important;
 }
-
-/* 2. 핵심 지표(KPI) 카드: 안전한 둥근 테두리 및 그림자 */
+/* 2. 핵심 지표(KPI) 카드 */
 [data-testid="stMetric"] { 
     background-color: #FFFFFF !important; 
     border-radius: 16px !important; 
@@ -63,8 +57,7 @@ h1, h2, h3 {
     box-shadow: 0px 4px 12px rgba(30, 41, 59, 0.05) !important;
     border: 1px solid #E2E8F0 !important;
 }
-
-/* 3. 버튼 및 엑셀 다운로드 (글자 뭉개짐 해결) */
+/* 3. 버튼 및 엑셀 다운로드 */
 div.stButton > button, div.stDownloadButton > button { 
     background-color: #1E2772 !important; 
     border: none !important; 
@@ -72,7 +65,6 @@ div.stButton > button, div.stDownloadButton > button {
     padding: 8px 24px !important;
     box-shadow: 0px 4px 10px rgba(30, 39, 114, 0.2) !important;
 }
-/* 버튼 내부의 모든 글자를 강제로 흰색 처리 */
 div.stButton > button *, div.stDownloadButton > button * { 
     color: #FFFFFF !important; 
     font-weight: 700 !important; 
@@ -80,26 +72,22 @@ div.stButton > button *, div.stDownloadButton > button * {
 div.stButton > button:hover, div.stDownloadButton > button:hover { 
     background-color: #141A4C !important; 
 }
-
 /* 4. 입력 필드 */
 div[data-testid="stForm"], div.stDateInput > div > div > input, div[data-baseweb="select"] > div { 
     border-radius: 8px !important; 
     border: 1px solid #E2E8F0 !important; 
     background-color: #FFFFFF !important;
 }
-
 /* 5. 데이터 프레임(표) 네이티브 디자인 (이중 테두리 및 여백 제거) */
 [data-testid="stDataFrame"] {
     background-color: #FFFFFF !important;
     border-radius: 16px !important;
     box-shadow: 0px 4px 12px rgba(30, 41, 59, 0.05) !important;
-    border: 1px solid #E2E8F0 !important; /* 바깥쪽 깔끔한 단일 테두리만 유지 */
-    padding: 0px !important; /* 💡 핵심: 안쪽 여백을 없애서 표를 테두리에 완전히 밀착시킴 */
-    overflow: hidden !important; /* 내부 표의 직각 모서리가 둥근 테두리 밖으로 삐져나오지 않게 절단 */
+    border: 1px solid #E2E8F0 !important;
+    padding: 0px !important;
+    overflow: hidden !important;
     margin-bottom: 20px !important;
 }
-
-/* 스트림릿 표 자체의 촌스러운 기본 2중 테두리 강제 삭제 */
 [data-testid="stDataFrame"] > div, 
 [data-testid="stDataFrame"] iframe {
     border: none !important; 
@@ -112,13 +100,11 @@ hr { border-color: #E2E8F0 !important; margin: 2em 0 !important; }
 st.title("🏭 한국 아사히 마시나리 - 생산 대시보드")
 st.markdown("---")
 
-DB_FILE_PATH = "아사히_마스터_DB.csv"
 SETTINGS_FILE_PATH = "대시보드_검색기록.json"
 ACCOUNT_REGEX = re.compile(r'^(\d{4})[-_]*([A-Z]*)[-_]*(.*)$')
 SPLIT_REGEX = re.compile(r'[~_-]+')
 GEUNTAE_PATTERN = re.compile('휴가|조퇴|외출|지각|休|早退|外出|遲刻', flags=re.IGNORECASE)
 
-# 특이 근태 판별용 개별 패턴 (compile 1회로 재사용 -> tab3 반복 계산 최적화)
 PATTERN_VACATION = re.compile('휴가|休')
 PATTERN_OUTING = re.compile('외출|外出')
 PATTERN_LATE = re.compile('지각|遲刻')
@@ -129,13 +115,12 @@ BRAND_COLORS = ['#1E2772', '#A3E635', '#7C3AED', '#F59E0B', '#3B82F6', '#10B981'
 if "processed_file_names" not in st.session_state:
     st.session_state.processed_file_names = set()
 
-# 💡 검색 기록 파일이 손상되어도 에러 없이 통과하도록 안전장치(isinstance) 추가
+# --- 설정 저장소 함수 (오류 방지 적용됨) ---
 def load_filter_settings():
     if os.path.exists(SETTINGS_FILE_PATH):
         try:
             with open(SETTINGS_FILE_PATH, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                # 데이터가 정상적인 서랍장(dict) 형태일 때만 반환하고, 아니면 텅 빈 상태({})로 초기화
                 if isinstance(data, dict):
                     return data
                 else:
@@ -143,36 +128,29 @@ def load_filter_settings():
         except: 
             return {}
     return {}
-    def save_filter_settings(settings):
-    import json
+
+def save_filter_settings(settings):
     with open(SETTINGS_FILE_PATH, "w", encoding="utf-8") as f:
         json.dump(settings, f, ensure_ascii=False, indent=2)
 
-# 1. 파이어베이스 연결 설정 (비밀 열쇠 사용)
+# --- 파이어베이스 클라우드 데이터베이스 연동 ---
 @st.cache_resource
 def init_firestore():
-    # secrets.toml에 넣어둔 열쇠 정보를 읽어옵니다.
-    key_dict = json.loads(st.secrets["firebase_key"])
+    key_dict = json.loads(st.secrets["firebase_key"], strict=False)
     creds = service_account.Credentials.from_service_account_info(key_dict)
     return firestore.Client(credentials=creds, project=key_dict["project_id"])
 
 db = init_firestore()
 COLLECTION_NAME = "asahi_master_db"
 
-# 2. 클라우드에서 데이터 가져오기
 @st.cache_data(show_spinner=False)
 def load_master_db():
     docs = db.collection(COLLECTION_NAME).stream()
     data = [doc.to_dict() for doc in docs]
     return pd.DataFrame(data) if data else pd.DataFrame()
 
-# 3. 클라우드에 데이터 안전하게 저장하기 (데이터 튕김 현상 완벽 방지)
 def save_master_db(df):
-    import json
-    
-    # 💡 핵심: 파이썬 특유의 숫자 형식을 파이어베이스가 거부하지 않도록 순수 텍스트/숫자로 변환
     cleaned_records = json.loads(df.to_json(orient="records", force_ascii=False))
-    
     chunk_size = 400
     for i in range(0, len(cleaned_records), chunk_size):
         batch = db.batch()
@@ -182,31 +160,42 @@ def save_master_db(df):
             doc_ref = db.collection(COLLECTION_NAME).document(doc_id)
             batch.set(doc_ref, row)
         batch.commit()
-        
     st.cache_data.clear()
 
 master_db = load_master_db()
 
+# --- 사이드바 및 파일 업로드 ---
 st.sidebar.header("📁 데이터 업로드")
 uploaded_files = st.sidebar.file_uploader("파일 드래그 앤 드롭", type=['xlsx', 'xls'], accept_multiple_files=True)
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("🗑️ DB 관리")
 if st.sidebar.button("🚨 마스터 DB 초기화"):
-    if os.path.exists(DB_FILE_PATH): os.remove(DB_FILE_PATH)
+    # 클라우드 데이터 전체 삭제
+    docs = db.collection(COLLECTION_NAME).stream()
+    batch = db.batch()
+    deleted = 0
+    for doc in docs:
+        batch.delete(doc.reference)
+        deleted += 1
+        if deleted % 400 == 0:
+            batch.commit()
+            batch = db.batch()
+    if deleted > 0:
+        batch.commit()
+        
     if os.path.exists(SETTINGS_FILE_PATH): os.remove(SETTINGS_FILE_PATH)
     st.cache_data.clear()
     st.session_state.processed_file_names = set()
     try: st.rerun()
     except AttributeError: st.experimental_rerun()
 
+# --- 데이터 변환 맵핑 ---
 dept_mapping = {'機械': '기계', '기계부': '기계', '電機': '전기', '전기부': '전기', '電裝': '전장', '전장부': '전장', '組立': '조립', '조립부': '조립', '設計': '설계', '설계부': '설계', '檢査': '검사', '검사부': '검사', '加工': '가공', '가공부': '가공', '制御': '제어', '제어부': '제어', '品質': '품질', '품질부': '품질'}
 worker_mapping = {'金雲石': '김운석', '朴振求': '박진구', '黃斗煥': '황두환', '李東在': '이동재', '李东在': '이동재', '李東宰': '이동재', '金映德': '김영덕', '金正吉': '김정길', '李哲珉': '이철민', '李哲民': '이철민', '李喆珉': '이철민', '金泰旻': '김태민', '丁海成': '정해성', '金建佑': '김건우', '金榮勳': '김영훈', '崔仁河': '최인하', '咸同圭': '함동규', '朴두리': '박두리', '黃纘赫': '황찬혁', '韓載壽': '한재수', '金泰賢': '김태현', '安成任': '안성임'}
-# 매핑 키를 미리 1회 정규화해 두어, translate_name 호출마다 반복되던 normalize 연산을 제거
 NORMALIZED_WORKER_MAPPING = [(unicodedata.normalize('NFKC', hanja), korean) for hanja, korean in worker_mapping.items()]
 
 KOR_HOLIDAYS = ['2026-01-01', '2026-02-16', '2026-02-17', '2026-02-18', '2026-03-01', '2026-05-05', '2026-05-24', '2026-06-06', '2026-08-15', '2026-09-24', '2026-09-25', '2026-09-26', '2026-10-03', '2026-10-09', '2026-12-25', '2025-01-01', '2025-01-28', '2025-01-29', '2025-01-30', '2025-03-01', '2025-05-05', '2025-06-06', '2025-08-15', '2025-10-03', '2025-10-05', '2025-10-06', '2025-10-07', '2025-10-09', '2025-12-25']
-# 반복 조회(in 연산)를 위해 set으로도 보관 (리스트 순회보다 조회 속도 개선)
 KOR_HOLIDAYS_SET = frozenset(KOR_HOLIDAYS)
 
 def format_unmanned(val):
@@ -257,8 +246,6 @@ def generate_attendance_html(df):
         is_weekend[d] = dt.weekday() >= 5
     workers = sorted(agg['작업자'].unique())
 
-    # 문자열을 '+='로 반복 이어붙이면 데이터가 커질수록 느려지므로(O(n^2)),
-    # 리스트에 조각을 모았다가 마지막에 한 번만 join (결과는 완전히 동일, 성능만 개선)
     html_parts = []
     html_parts.append("""
     <div style='overflow-x: auto; background-color: #FFFFFF; border-radius: 16px; padding: 24px; border: 1px solid #E2E8F0; box-shadow: 0px 4px 12px rgba(30, 41, 59, 0.05); margin-bottom: 20px;'>
@@ -271,8 +258,6 @@ def generate_attendance_html(df):
         html_parts.append(f"<th style='border-bottom: 2px solid #F1F5F9; padding: 15px 10px; color: {color}; font-weight: 600;'>{c}</th>")
 
     html_parts.append("<th style='border-bottom: 2px solid #F1F5F9; padding: 15px 10px; color: #1E2772; font-weight: 700;'>합계(h)</th></tr>")
-
-    # 작업자별 일자 데이터를 groupby로 미리 나눠두어, 반복 필터링(day_data = w_data[...]) 비용을 절감
     grouped_by_worker = {w: wdf.set_index('작업일자') for w, wdf in agg.groupby('작업자')}
 
     for w in workers:
@@ -322,8 +307,6 @@ def render_tab_filters(tab_id, df):
     global_settings = load_filter_settings()
     tab_settings = global_settings.get(tab_id, {})
 
-    # 작업일자를 1회만 datetime으로 변환해 min/max 계산과 필터링에 재사용
-    # (기존 코드는 동일한 변환을 두 번 수행했음 -> 결과는 동일, 계산 비용만 절감)
     dates_dt = pd.to_datetime(df['작업일자'])
     min_date = dates_dt.min().date()
     max_date = dates_dt.max().date()
@@ -375,9 +358,9 @@ def render_tab_filters(tab_id, df):
     st.markdown("<br>", unsafe_allow_html=True)
     return filtered_df
 
+# --- 데이터 업로드 및 정제 ---
 if uploaded_files:
     new_files = [f for f in uploaded_files if f.name not in st.session_state.processed_file_names]
-
     if new_files:
         all_cleaned_data = []
         with st.spinner('🚀 데이터를 스캔 중입니다...'):
@@ -445,7 +428,6 @@ if uploaded_files:
                             res = []
                             for acc, r, o, u in splits: res.append({'구좌명': acc, '정규시간': r, '잔업시간': o, '총시간': r + o, '무인가공': u})
                             return res
-
                         df_valid['splits'] = df_valid.apply(process_row, axis=1)
                         df_expanded = df_valid.explode('splits').reset_index(drop=True)
                         splits_df = pd.DataFrame(df_expanded['splits'].tolist(), index=df_expanded.index)
@@ -470,6 +452,7 @@ if uploaded_files:
             st.cache_data.clear()
             master_db = load_master_db()
 
+# --- 탭 출력 및 시각화 ---
 if not master_db.empty:
     tab1, tab2, tab3 = st.tabs(["📊 요약 대시보드", "📅 출·퇴근 현황", "🏖️ 특이 근태"])
 
@@ -497,7 +480,6 @@ if not master_db.empty:
             fig1.update_traces(textposition="outside", textfont=dict(size=12, color="#64748B"), marker_cornerradius=4)
             fig1 = apply_modern_chart_layout(fig1, "구좌명", "시간 (h)")
             st.plotly_chart(fig1, use_container_width=True)
-
             st.markdown("<br>", unsafe_allow_html=True)
 
             st.markdown("### 2. 구좌별/부서별 상세 분석", unsafe_allow_html=True)
@@ -515,7 +497,6 @@ if not master_db.empty:
                 df_dept_pivot.loc['총계'] = df_dept_pivot.sum(axis=0)
                 df_dept_pivot = df_dept_pivot.reset_index()
                 st.dataframe(df_dept_pivot, use_container_width=True)
-
             st.markdown("<br>", unsafe_allow_html=True)
 
             st.markdown("### 3. 작업자별 개인 생산 시간", unsafe_allow_html=True)
@@ -538,7 +519,6 @@ if not master_db.empty:
                 df_pivot['총합계'] = df_pivot['일반 작업'] + df_pivot['Z구좌 (휴식/조례)']
                 df_pivot = df_pivot.sort_values(by='총합계', ascending=False).reset_index()
                 st.dataframe(df_pivot, use_container_width=True)
-
         else:
             st.warning("데이터가 없습니다.")
 
@@ -558,9 +538,6 @@ if not master_db.empty:
         df_geuntae = df_geuntae.drop_duplicates(subset=['작업일자', '작업자'], keep='first')
 
         if not df_geuntae.empty:
-            # 기존에는 행 단위 apply에서 매번 pd.to_datetime을 호출했으나,
-            # 날짜 변환과 주말/공휴일 판정, 유형 분류를 모두 벡터화(np.select)하여
-            # 동일한 결과를 더 적은 연산으로 산출 (elif 우선순위: 휴가 > 외출 > 지각 > 조퇴 그대로 유지)
             x_str = df_geuntae['근태'].astype(str)
             dt_series = pd.to_datetime(df_geuntae['작업일자'])
             is_weekend_holiday = (dt_series.dt.weekday >= 5) | df_geuntae['작업일자'].isin(KOR_HOLIDAYS_SET)
@@ -582,7 +559,6 @@ if not master_db.empty:
             choices = ['휴가', '제외', '외출', '제외', '지각', '제외', '조퇴']
             df_geuntae = df_geuntae.copy()
             df_geuntae['구분'] = np.select(conditions, choices, default='기타')
-
             df_geuntae = df_geuntae[~df_geuntae['구분'].isin(['기타', '제외'])]
 
             if not df_geuntae.empty:
