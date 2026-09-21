@@ -8,17 +8,17 @@ import os
 import unicodedata
 from datetime import datetime
 import json
+import time
 from google.cloud import firestore
 from google.oauth2 import service_account
 
 st.set_page_config(page_title="아사히 마시나리 대시보드", layout="wide", initial_sidebar_state="expanded")
 
-# 🎨 [안전한 모던 클린 CSS] 모바일 흔들림 방지 및 표 테두리 제거 포함
+# 🎨 [안전한 모던 클린 CSS] 모바일 흔들림 방지 및 표 테두리 제거
 st.markdown("""
 <style>
 @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
 
-/* 📱 모바일 화면 가로 밀림 완벽 차단 (3중 방어) */
 html, body, .stApp, [data-testid="stAppViewContainer"], .main {
     max-width: 100% !important;
     overflow-x: hidden !important;
@@ -35,11 +35,8 @@ html, body, .stApp, [data-testid="stAppViewContainer"], .main {
     max-width: 100% !important;
     box-sizing: border-box !important;
 }
-* { 
-    box-sizing: border-box !important; 
-}
+* { box-sizing: border-box !important; }
 
-/* 1. 전체 배경 */
 [data-testid="stAppViewContainer"] { 
     background-color: #F3F4F8 !important; 
     font-family: 'Pretendard', sans-serif !important;
@@ -49,7 +46,6 @@ h1, h2, h3 {
     font-weight: 800 !important; 
     letter-spacing: -0.5px !important;
 }
-/* 2. 핵심 지표(KPI) 카드 */
 [data-testid="stMetric"] { 
     background-color: #FFFFFF !important; 
     border-radius: 16px !important; 
@@ -57,7 +53,6 @@ h1, h2, h3 {
     box-shadow: 0px 4px 12px rgba(30, 41, 59, 0.05) !important;
     border: 1px solid #E2E8F0 !important;
 }
-/* 3. 버튼 및 엑셀 다운로드 */
 div.stButton > button, div.stDownloadButton > button { 
     background-color: #1E2772 !important; 
     border: none !important; 
@@ -72,13 +67,11 @@ div.stButton > button *, div.stDownloadButton > button * {
 div.stButton > button:hover, div.stDownloadButton > button:hover { 
     background-color: #141A4C !important; 
 }
-/* 4. 입력 필드 */
 div[data-testid="stForm"], div.stDateInput > div > div > input, div[data-baseweb="select"] > div { 
     border-radius: 8px !important; 
     border: 1px solid #E2E8F0 !important; 
     background-color: #FFFFFF !important;
 }
-/* 5. 데이터 프레임(표) 네이티브 디자인 (이중 테두리 및 여백 제거) */
 [data-testid="stDataFrame"] {
     background-color: #FFFFFF !important;
     border-radius: 16px !important;
@@ -115,25 +108,20 @@ BRAND_COLORS = ['#1E2772', '#A3E635', '#7C3AED', '#F59E0B', '#3B82F6', '#10B981'
 if "processed_file_names" not in st.session_state:
     st.session_state.processed_file_names = set()
 
-# --- 설정 저장소 함수 (오류 방지 적용됨) ---
 def load_filter_settings():
     if os.path.exists(SETTINGS_FILE_PATH):
         try:
             with open(SETTINGS_FILE_PATH, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                if isinstance(data, dict):
-                    return data
-                else:
-                    return {}
-        except: 
-            return {}
+                if isinstance(data, dict): return data
+                else: return {}
+        except: return {}
     return {}
 
 def save_filter_settings(settings):
     with open(SETTINGS_FILE_PATH, "w", encoding="utf-8") as f:
         json.dump(settings, f, ensure_ascii=False, indent=2)
 
-# --- 파이어베이스 클라우드 데이터베이스 연동 ---
 @st.cache_resource
 def init_firestore():
     key_dict = json.loads(st.secrets["firebase_key"], strict=False)
@@ -149,29 +137,46 @@ def load_master_db():
     data = [doc.to_dict() for doc in docs]
     return pd.DataFrame(data) if data else pd.DataFrame()
 
-def save_master_db(df):
+# 💡 실무용 최적화: 신규 엑셀 데이터만 빠르고 가볍게 클라우드에 업데이트
+def update_daily_db(df):
     cleaned_records = json.loads(df.to_json(orient="records", force_ascii=False))
-    chunk_size = 400
-    for i in range(0, len(cleaned_records), chunk_size):
+    chunk_size = 100
+    total_records = len(cleaned_records)
+    
+    progress_text = st.empty()
+    progress_bar = st.progress(0)
+    
+    for i in range(0, total_records, chunk_size):
         batch = db.batch()
         chunk = cleaned_records[i:i+chunk_size]
         for row in chunk:
             doc_id = f"{row['작업일자']}_{row['작업자']}_{row['구좌명']}_{row['부서']}"
             doc_ref = db.collection(COLLECTION_NAME).document(doc_id)
             batch.set(doc_ref, row)
+        
         batch.commit()
+        
+        current_progress = min(i + chunk_size, total_records)
+        progress_text.text(f"🚀 일일 데이터 클라우드 저장 중... ({current_progress} / {total_records} 건 완료)")
+        progress_bar.progress(current_progress / total_records)
+        
+        time.sleep(1) # 일일 데이터는 용량이 적으므로 대기시간 단축
+        
+    progress_text.success("✅ 일일 데이터 클라우드 저장 완료!")
+    time.sleep(1)
+    progress_text.empty()
+    progress_bar.empty()
     st.cache_data.clear()
 
 master_db = load_master_db()
 
 # --- 사이드바 및 파일 업로드 ---
-st.sidebar.header("📁 데이터 업로드")
-uploaded_files = st.sidebar.file_uploader("파일 드래그 앤 드롭", type=['xlsx', 'xls'], accept_multiple_files=True)
+st.sidebar.header("📁 일일 데이터 업로드")
+uploaded_files = st.sidebar.file_uploader("작업일보 엑셀 파일 드래그 앤 드롭", type=['xlsx', 'xls'], accept_multiple_files=True)
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("🗑️ DB 관리")
 if st.sidebar.button("🚨 마스터 DB 초기화"):
-    # 클라우드 데이터 전체 삭제
     docs = db.collection(COLLECTION_NAME).stream()
     batch = db.batch()
     deleted = 0
@@ -358,7 +363,6 @@ def render_tab_filters(tab_id, df):
     st.markdown("<br>", unsafe_allow_html=True)
     return filtered_df
 
-# --- 데이터 업로드 및 정제 ---
 if uploaded_files:
     new_files = [f for f in uploaded_files if f.name not in st.session_state.processed_file_names]
     if new_files:
@@ -440,19 +444,21 @@ if uploaded_files:
                         all_cleaned_data.append(daily_agg)
 
         if all_cleaned_data:
+            # 새로 올라온 데이터(엑셀 파일)만 별도로 추출 및 정리
             new_df = pd.concat(all_cleaned_data, ignore_index=True)
-            master_db = pd.concat([master_db, new_df], ignore_index=True)
-            master_db['근태_있음'] = master_db['근태'] != ''
-            master_db = master_db.sort_values(by=['무인가공', '근태_있음'], ascending=[False, False])
-            master_db = master_db.drop_duplicates(subset=['작업일자', '작업자', '구좌명', '부서'], keep='first')
-            master_db = master_db.drop(columns=['근태_있음'])
-            save_master_db(master_db)
+            new_df['근태_있음'] = new_df['근태'] != ''
+            new_df = new_df.sort_values(by=['무인가공', '근태_있음'], ascending=[False, False])
+            new_df = new_df.drop_duplicates(subset=['작업일자', '작업자', '구좌명', '부서'], keep='first')
+            new_df = new_df.drop(columns=['근태_있음'])
+            
+            # 💡 최적화 포인트: 방대한 master_db 전체가 아닌, 새로 파싱된 엑셀 데이터(new_df)만 클라우드로 전송
+            update_daily_db(new_df)
+            
             for f in new_files: st.session_state.processed_file_names.add(f.name)
-            st.success("✅ 업데이트 완료!")
+            st.success("✅ 일일 데이터 업데이트 완료!")
             st.cache_data.clear()
             master_db = load_master_db()
 
-# --- 탭 출력 및 시각화 ---
 if not master_db.empty:
     tab1, tab2, tab3 = st.tabs(["📊 요약 대시보드", "📅 출·퇴근 현황", "🏖️ 특이 근태"])
 
@@ -583,4 +589,4 @@ if not master_db.empty:
         else:
             st.info("특이 근태 기록이 없습니다.")
 else:
-    st.info("👈 사이드바에서 엑셀 파일을 업로드해 주세요!")
+    st.info("👈 사이드바에서 일일 엑셀 파일을 업로드해 주세요!")
