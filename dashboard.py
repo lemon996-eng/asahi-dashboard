@@ -9,12 +9,13 @@ import unicodedata
 from datetime import datetime
 import json
 import time
+import math
 from google.cloud import firestore
 from google.oauth2 import service_account
 
 st.set_page_config(page_title="아사히 마시나리 대시보드", layout="wide", initial_sidebar_state="expanded")
 
-# 🎨 [안전한 모던 클린 CSS] 모바일 흔들림 방지 및 표 테두리 제거
+# 🎨 [안전한 모던 클린 CSS]
 st.markdown("""
 <style>
 @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
@@ -105,7 +106,6 @@ PATTERN_EARLY = re.compile('조퇴|早退')
 
 BRAND_COLORS = ['#1E2772', '#A3E635', '#7C3AED', '#F59E0B', '#3B82F6', '#10B981']
 
-# 💡 파일 업로더 초기화를 위한 고유 키 생성 및 관리
 if "uploader_key" not in st.session_state:
     st.session_state.uploader_key = "1"
 if "processed_file_names" not in st.session_state:
@@ -140,7 +140,6 @@ def load_master_db():
     data = [doc.to_dict() for doc in docs]
     return pd.DataFrame(data) if data else pd.DataFrame()
 
-# 💡 실무용 최적화: 신규 엑셀 데이터만 빠르고 가볍게 클라우드에 업데이트
 def update_daily_db(df):
     cleaned_records = json.loads(df.to_json(orient="records", force_ascii=False))
     chunk_size = 100
@@ -158,12 +157,10 @@ def update_daily_db(df):
             batch.set(doc_ref, row)
         
         batch.commit()
-        
         current_progress = min(i + chunk_size, total_records)
         progress_text.text(f"🚀 일일 데이터 클라우드 저장 중... ({current_progress} / {total_records} 건 완료)")
         progress_bar.progress(current_progress / total_records)
-        
-        time.sleep(1) # 일일 데이터는 용량이 적으므로 대기시간 단축
+        time.sleep(1)
         
     progress_text.success("✅ 일일 데이터 클라우드 저장 완료!")
     time.sleep(1)
@@ -178,12 +175,11 @@ uploaded_files = st.sidebar.file_uploader(
     "작업일보 엑셀 파일 드래그 앤 드롭", 
     type=['xlsx', 'xls'], 
     accept_multiple_files=True,
-    key=st.session_state.uploader_key # 💡 업로드 완료 후 창을 비우기 위한 키
+    key=st.session_state.uploader_key 
 )
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("🗑️ DB 관리")
-# 💡 프로액티브 제안 1: 데이터 날림 방지용 안전장치 (체크박스)
 unlock_reset = st.sidebar.checkbox("초기화 권한 잠금 해제 (위험)")
 if st.sidebar.button("🚨 마스터 DB 초기화", disabled=not unlock_reset):
     docs = db.collection(COLLECTION_NAME).stream()
@@ -417,15 +413,32 @@ if uploaded_files:
                 else:
                     df_clean['무인가공'] = 0.0
 
+                # 💡 float 에러 방지를 위해 fillna('') 적용 후 안전하게 탐색
                 geuntae_series = pd.Series('', index=df_raw.index)
-                cols_to_check = [col for col in df_raw.columns if col not in ['作業者', '작업자', '作業日', '작업일자']]
+                cols_to_check = [col for col in df_raw.columns if col not in ['作業者', '작업자', '作業日', '작업일자', '구좌명', '부서', '구좌번호', '部署', '口座番號']]
+                
                 for col in cols_to_check:
-                    col_data = df_raw[col]
-                    if col_data.dtype == object or pd.api.types.is_string_dtype(col_data):
-                        col_str = col_data.astype(str)
-                        mask = col_str.str.contains(GEUNTAE_PATTERN, na=False)
-                        if mask.any(): geuntae_series.loc[mask] = (geuntae_series.loc[mask] + " " + col_str.loc[mask]).str.strip()
-                df_clean['근태'] = geuntae_series
+                    col_str = df_raw[col].fillna('').astype(str).str.strip()
+                    mask = col_str.str.contains(GEUNTAE_PATTERN, na=False)
+                    if mask.any(): 
+                        geuntae_series.loc[mask] = (geuntae_series.loc[mask] + " " + col_str.loc[mask]).str.strip()
+                            
+                has_geuntae = geuntae_series != ''
+                bigo_cols = [col for col in df_raw.columns if any(k in str(col) for k in ['비고', '사유', '備考', '내용', '참고', '근태'])]
+                for col in bigo_cols:
+                    col_str = df_raw[col].fillna('').astype(str).str.strip()
+                    is_meaningful = ~col_str.isin(['', 'O', 'X', '0', '0.0', 'nan', 'NaN'])
+                    mask = has_geuntae & is_meaningful
+                    if mask.any():
+                        for idx in df_raw.index[mask]:
+                            # 💡 강제 문자열 변환(str)을 통해 float 오류 완벽 차단
+                            val_to_add = str(col_str.loc[idx])
+                            target_str = str(geuntae_series.loc[idx])
+                            
+                            if val_to_add not in target_str:
+                                geuntae_series.loc[idx] = target_str + " " + val_to_add
+                                
+                df_clean['근태'] = geuntae_series.str.strip()
 
                 if not df_clean.empty and '총시간' in df_clean.columns:
                     df_clean['작업일자'] = pd.to_datetime(df_clean['작업일자'], errors='coerce').dt.strftime('%Y-%m-%d')
@@ -460,10 +473,8 @@ if uploaded_files:
             new_df = new_df.drop(columns=['근태_있음'])
             
             update_daily_db(new_df)
-            
             for f in new_files: st.session_state.processed_file_names.add(f.name)
             
-            # 💡 프로액티브 제안 2: 캐시 삭제 후 자동 리프레시를 통한 메인화면 복귀
             st.cache_data.clear()
             st.success("✅ 일일 데이터 업데이트 완료! 1초 뒤 메인 화면으로 돌아갑니다.")
             time.sleep(1.5)
@@ -551,54 +562,90 @@ if not master_db.empty:
 
     with tab3:
         filtered_df_tab3 = render_tab_filters("특이근태현황", master_db)
-        st.info("💡 **알림:** 주말(토/일) 및 법정 공휴일에 발생한 '조퇴', '지각', '외출'은 자동 제외됩니다.")
+        st.info("💡 **알림:** 주말 및 공휴일은 제외되며, 외출/지각 시 1분이라도 초과 시 30분 단위 올림 적용, 점심시간(12:20~13:00) 포함 시 해당 시간이 차감됩니다.")
 
         df_geuntae = filtered_df_tab3[filtered_df_tab3['근태'].str.contains(GEUNTAE_PATTERN, na=False)][['작업일자', '부서', '작업자', '근태']]
         df_geuntae = df_geuntae.drop_duplicates(subset=['작업일자', '작업자'], keep='first')
 
         if not df_geuntae.empty:
-            x_str = df_geuntae['근태'].astype(str)
-            dt_series = pd.to_datetime(df_geuntae['작업일자'])
-            is_weekend_holiday = (dt_series.dt.weekday >= 5) | df_geuntae['작업일자'].isin(KOR_HOLIDAYS_SET)
+            def calculate_geuntae(row):
+                date_str = row['작업일자']
+                dt = pd.to_datetime(date_str)
+                is_weekend = (dt.weekday() >= 5) or (date_str in KOR_HOLIDAYS_SET)
+                is_friday = (dt.weekday() == 4)
+                text = str(row['근태'])
+                
+                matches = re.findall(r'(\d{1,2})[:시]\s*(\d{2})?', text)
+                times = [int(h) * 60 + (int(m) if m else 0) for h, m in matches]
+                    
+                def calc_duration(start, end, rounding_mode="round"):
+                    if start >= end: return 0.0
+                    overlap_start = max(start, 740) 
+                    overlap_end = min(end, 780)     
+                    lunch_overlap = max(0, overlap_end - overlap_start)
+                    net_mins = (end - start) - lunch_overlap
+                    
+                    if rounding_mode == "ceil":
+                        return math.ceil(net_mins / 30.0) * 0.5 
+                    else:
+                        return round(net_mins / 30.0) * 0.5      
 
-            has_vacation = x_str.str.contains(PATTERN_VACATION, na=False)
-            has_outing = x_str.str.contains(PATTERN_OUTING, na=False)
-            has_late = x_str.str.contains(PATTERN_LATE, na=False)
-            has_early = x_str.str.contains(PATTERN_EARLY, na=False)
+                if re.search(PATTERN_VACATION, text):
+                    extra_text = re.sub(PATTERN_VACATION, '', text).strip()
+                    clean_extra = re.sub(r'[^가-힣]', '', extra_text)
+                    
+                    if clean_extra != '' and '무급' not in text:
+                        return pd.Series(['제외', 0.0])
+                        
+                    return pd.Series(['휴가', 0.0 if is_weekend else (8.0 if is_friday else 9.0)])
+                    
+                if is_weekend:
+                    return pd.Series(['제외', 0.0])
+                    
+                if re.search(PATTERN_OUTING, text):
+                    hrs = calc_duration(times[0], times[1], rounding_mode="ceil") if len(times) >= 2 else 0.0
+                    return pd.Series(['외출', hrs])
+                    
+                if re.search(PATTERN_LATE, text):
+                    hrs = calc_duration(500, times[0], rounding_mode="ceil") if len(times) >= 1 else 0.0
+                    return pd.Series(['지각', hrs])
+                    
+                if re.search(PATTERN_EARLY, text):
+                    if len(times) >= 1:
+                        end_time = 1020 if is_friday else 1080 
+                        hrs = calc_duration(times[0], end_time)
+                    else: hrs = 0.0
+                    return pd.Series(['조퇴', hrs])
+                    
+                return pd.Series(['기타', 0.0])
 
-            conditions = [
-                has_vacation,
-                has_outing & is_weekend_holiday,
-                has_outing & ~is_weekend_holiday,
-                has_late & is_weekend_holiday,
-                has_late & ~is_weekend_holiday,
-                has_early & is_weekend_holiday,
-                has_early & ~is_weekend_holiday,
-            ]
-            choices = ['휴가', '제외', '외출', '제외', '지각', '제외', '조퇴']
-            df_geuntae = df_geuntae.copy()
-            df_geuntae['구분'] = np.select(conditions, choices, default='기타')
+            df_geuntae[['구분', '시간(h)']] = df_geuntae.apply(calculate_geuntae, axis=1)
             df_geuntae = df_geuntae[~df_geuntae['구분'].isin(['기타', '제외'])]
 
             if not df_geuntae.empty:
                 counts = df_geuntae['구분'].value_counts()
+                hours = df_geuntae.groupby('구분')['시간(h)'].sum()
+                total_geuntae_hours = df_geuntae['시간(h)'].sum()
+
+                st.markdown(f"<h4 style='color: #1E2772; font-weight: 800;'>📊 특이 근태 총 합계 시간: {total_geuntae_hours:.1f} h</h4>", unsafe_allow_html=True)
+                
                 c1, c2, c3, c4 = st.columns(4)
-                c1.metric("🌴 휴가", f"{counts.get('휴가', 0)} 건")
-                c2.metric("🏃 평일 조퇴", f"{counts.get('조퇴', 0)} 건")
-                c3.metric("🚶 평일 외출", f"{counts.get('외출', 0)} 건")
-                c4.metric("⏰ 평일 지각", f"{counts.get('지각', 0)} 건")
+                c1.metric("🌴 휴가", f"{counts.get('휴가', 0)} 건", f"합계 {hours.get('휴가', 0.0):.1f} h", delta_color="off")
+                c2.metric("🏃 조퇴", f"{counts.get('조퇴', 0)} 건", f"합계 {hours.get('조퇴', 0.0):.1f} h", delta_color="off")
+                c3.metric("🚶 외출", f"{counts.get('외출', 0)} 건", f"합계 {hours.get('외출', 0.0):.1f} h", delta_color="off")
+                c4.metric("⏰ 지각", f"{counts.get('지각', 0)} 건", f"합계 {hours.get('지각', 0.0):.1f} h", delta_color="off")
 
                 chart_col, table_col = st.columns([4, 6])
                 with chart_col:
-                    fig_g = px.histogram(df_geuntae, x='부서', color='구분', text_auto=True, barmode='group', color_discrete_sequence=BRAND_COLORS)
-                    fig_g = apply_modern_chart_layout(fig_g, "부서", "건수", "구분")
+                    fig_g = px.histogram(df_geuntae, x='부서', y='시간(h)', color='구분', text_auto='.1f', barmode='group', color_discrete_sequence=BRAND_COLORS)
+                    fig_g = apply_modern_chart_layout(fig_g, "부서", "누적 시간 (h)", "구분")
                     st.plotly_chart(fig_g, use_container_width=True)
 
                 with table_col:
                     df_display = df_geuntae.drop(columns=['구분']).sort_values(by=['작업일자', '부서', '작업자']).reset_index(drop=True)
                     st.dataframe(df_display, use_container_width=True)
             else:
-                st.info("특이 근태가 없습니다.")
+                st.info("조건에 해당하는 특이 근태가 없습니다.")
         else:
             st.info("특이 근태 기록이 없습니다.")
 else:
