@@ -105,6 +105,9 @@ PATTERN_EARLY = re.compile('조퇴|早退')
 
 BRAND_COLORS = ['#1E2772', '#A3E635', '#7C3AED', '#F59E0B', '#3B82F6', '#10B981']
 
+# 💡 파일 업로더 초기화를 위한 고유 키 생성 및 관리
+if "uploader_key" not in st.session_state:
+    st.session_state.uploader_key = "1"
 if "processed_file_names" not in st.session_state:
     st.session_state.processed_file_names = set()
 
@@ -166,17 +169,23 @@ def update_daily_db(df):
     time.sleep(1)
     progress_text.empty()
     progress_bar.empty()
-    st.cache_data.clear()
 
 master_db = load_master_db()
 
 # --- 사이드바 및 파일 업로드 ---
 st.sidebar.header("📁 일일 데이터 업로드")
-uploaded_files = st.sidebar.file_uploader("작업일보 엑셀 파일 드래그 앤 드롭", type=['xlsx', 'xls'], accept_multiple_files=True)
+uploaded_files = st.sidebar.file_uploader(
+    "작업일보 엑셀 파일 드래그 앤 드롭", 
+    type=['xlsx', 'xls'], 
+    accept_multiple_files=True,
+    key=st.session_state.uploader_key # 💡 업로드 완료 후 창을 비우기 위한 키
+)
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("🗑️ DB 관리")
-if st.sidebar.button("🚨 마스터 DB 초기화"):
+# 💡 프로액티브 제안 1: 데이터 날림 방지용 안전장치 (체크박스)
+unlock_reset = st.sidebar.checkbox("초기화 권한 잠금 해제 (위험)")
+if st.sidebar.button("🚨 마스터 DB 초기화", disabled=not unlock_reset):
     docs = db.collection(COLLECTION_NAME).stream()
     batch = db.batch()
     deleted = 0
@@ -444,20 +453,24 @@ if uploaded_files:
                         all_cleaned_data.append(daily_agg)
 
         if all_cleaned_data:
-            # 새로 올라온 데이터(엑셀 파일)만 별도로 추출 및 정리
             new_df = pd.concat(all_cleaned_data, ignore_index=True)
             new_df['근태_있음'] = new_df['근태'] != ''
             new_df = new_df.sort_values(by=['무인가공', '근태_있음'], ascending=[False, False])
             new_df = new_df.drop_duplicates(subset=['작업일자', '작업자', '구좌명', '부서'], keep='first')
             new_df = new_df.drop(columns=['근태_있음'])
             
-            # 💡 최적화 포인트: 방대한 master_db 전체가 아닌, 새로 파싱된 엑셀 데이터(new_df)만 클라우드로 전송
             update_daily_db(new_df)
             
             for f in new_files: st.session_state.processed_file_names.add(f.name)
-            st.success("✅ 일일 데이터 업데이트 완료!")
+            
+            # 💡 프로액티브 제안 2: 캐시 삭제 후 자동 리프레시를 통한 메인화면 복귀
             st.cache_data.clear()
-            master_db = load_master_db()
+            st.success("✅ 일일 데이터 업데이트 완료! 1초 뒤 메인 화면으로 돌아갑니다.")
+            time.sleep(1.5)
+            
+            st.session_state.uploader_key = str(time.time())
+            try: st.rerun()
+            except AttributeError: st.experimental_rerun()
 
 if not master_db.empty:
     tab1, tab2, tab3 = st.tabs(["📊 요약 대시보드", "📅 출·퇴근 현황", "🏖️ 특이 근태"])
