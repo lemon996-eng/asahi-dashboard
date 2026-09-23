@@ -413,20 +413,23 @@ if uploaded_files:
                 else:
                     df_clean['무인가공'] = 0.0
 
-                # 💡 float 에러 방지를 위해 fillna('') 적용 후 안전하게 탐색
+                # 💡 핵심 방어 로직: 비고란, 사유란의 텍스트를 하나도 빠짐없이 긁어와서 근태 텍스트와 합체
                 geuntae_series = pd.Series('', index=df_raw.index)
                 cols_to_check = [col for col in df_raw.columns if col not in ['作業者', '작업자', '作業日', '작업일자', '구좌명', '부서', '구좌번호', '部署', '口座番號']]
                 
+                # 1. 엑셀에서 근태 키워드가 있는 열 탐색
                 for col in cols_to_check:
                     col_str = df_raw[col].fillna('').astype(str).str.strip()
                     mask = col_str.str.contains(GEUNTAE_PATTERN, na=False)
                     if mask.any(): 
                         geuntae_series.loc[mask] = (geuntae_series.loc[mask] + " " + col_str.loc[mask]).str.strip()
                             
+                # 2. 비고, 사유 등이 적힌 열을 추가 탐색하여 누락 방지
                 has_geuntae = geuntae_series != ''
                 bigo_cols = [col for col in df_raw.columns if any(k in str(col) for k in ['비고', '사유', '備考', '내용', '참고', '근태'])]
                 for col in bigo_cols:
                     col_str = df_raw[col].fillna('').astype(str).str.strip()
+                    # 💡 O, X, 숫자 같은 의미 없는 기호가 섞이는 것 방지
                     is_meaningful = ~col_str.isin(['', 'O', 'X', '0', '0.0', 'nan', 'NaN'])
                     mask = has_geuntae & is_meaningful
                     if mask.any():
@@ -630,7 +633,7 @@ if not master_db.empty:
                 st.markdown(f"<h4 style='color: #1E2772; font-weight: 800;'>📊 특이 근태 총 합계 시간: {total_geuntae_hours:.1f} h</h4>", unsafe_allow_html=True)
                 
                 c1, c2, c3, c4 = st.columns(4)
-                c1.metric("🌴 휴가", f"{counts.get('휴가', 0)} 건", f"합계 {hours.get('휴가', 0.0):.1f} h", delta_color="off")
+                c1.metric("🌴 무급 휴가", f"{counts.get('휴가', 0)} 건", f"합계 {hours.get('휴가', 0.0):.1f} h", delta_color="off")
                 c2.metric("🏃 조퇴", f"{counts.get('조퇴', 0)} 건", f"합계 {hours.get('조퇴', 0.0):.1f} h", delta_color="off")
                 c3.metric("🚶 외출", f"{counts.get('외출', 0)} 건", f"합계 {hours.get('외출', 0.0):.1f} h", delta_color="off")
                 c4.metric("⏰ 지각", f"{counts.get('지각', 0)} 건", f"합계 {hours.get('지각', 0.0):.1f} h", delta_color="off")
