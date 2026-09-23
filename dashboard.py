@@ -103,6 +103,8 @@ PATTERN_VACATION = re.compile('휴가|休')
 PATTERN_OUTING = re.compile('외출|外出')
 PATTERN_LATE = re.compile('지각|遲刻')
 PATTERN_EARLY = re.compile('조퇴|早退')
+# 근태 텍스트에서 시각을 추출하는 정규식도 미리 컴파일해 재사용 (행 단위 apply에서 매번 새로 만들지 않도록)
+TIME_PATTERN = re.compile(r'(\d{1,2})[:시]\s*(\d{2})?')
 
 BRAND_COLORS = ['#1E2772', '#A3E635', '#7C3AED', '#F59E0B', '#3B82F6', '#10B981']
 
@@ -214,6 +216,20 @@ def format_unmanned(val):
         if v == int(v): return f"{int(v):02d}시간"
         else: return f"{v:05.2f}시간"
     except: return "00시간"
+
+def _calc_geuntae_duration(start, end, rounding_mode="round"):
+    # 기존에는 calculate_geuntae() 내부(행 단위 apply)에서 매번 새로 정의되던 함수를
+    # 모듈 최상위로 옮겨, 행마다 클로저를 새로 만드는 비용을 없앴다 (계산 로직은 100% 동일)
+    if start >= end: return 0.0
+    overlap_start = max(start, 740)
+    overlap_end = min(end, 780)
+    lunch_overlap = max(0, overlap_end - overlap_start)
+    net_mins = (end - start) - lunch_overlap
+
+    if rounding_mode == "ceil":
+        return math.ceil(net_mins / 30.0) * 0.5
+    else:
+        return round(net_mins / 30.0) * 0.5
 
 def translate_name(name_str):
     if pd.isna(name_str): return ""
@@ -571,27 +587,21 @@ if not master_db.empty:
         df_geuntae = df_geuntae.drop_duplicates(subset=['작업일자', '작업자'], keep='first')
 
         if not df_geuntae.empty:
+            # 기존에는 행 단위 apply 안에서 매번 pd.to_datetime(date_str)을 호출했으나,
+            # 요일(weekday)만 있으면 되므로 전체 컬럼을 1회만 벡터화 변환해 재사용
+            # (계산 결과는 기존과 완전히 동일, 반복되는 날짜 파싱 비용만 절감)
+            df_geuntae = df_geuntae.copy()
+            df_geuntae['_weekday'] = pd.to_datetime(df_geuntae['작업일자']).dt.weekday.values
+
             def calculate_geuntae(row):
                 date_str = row['작업일자']
-                dt = pd.to_datetime(date_str)
-                is_weekend = (dt.weekday() >= 5) or (date_str in KOR_HOLIDAYS_SET)
-                is_friday = (dt.weekday() == 4)
+                weekday = row['_weekday']
+                is_weekend = (weekday >= 5) or (date_str in KOR_HOLIDAYS_SET)
+                is_friday = (weekday == 4)
                 text = str(row['근태'])
-                
-                matches = re.findall(r'(\d{1,2})[:시]\s*(\d{2})?', text)
+
+                matches = TIME_PATTERN.findall(text)
                 times = [int(h) * 60 + (int(m) if m else 0) for h, m in matches]
-                    
-                def calc_duration(start, end, rounding_mode="round"):
-                    if start >= end: return 0.0
-                    overlap_start = max(start, 740) 
-                    overlap_end = min(end, 780)     
-                    lunch_overlap = max(0, overlap_end - overlap_start)
-                    net_mins = (end - start) - lunch_overlap
-                    
-                    if rounding_mode == "ceil":
-                        return math.ceil(net_mins / 30.0) * 0.5 
-                    else:
-                        return round(net_mins / 30.0) * 0.5      
 
                 if re.search(PATTERN_VACATION, text):
                     extra_text = re.sub(PATTERN_VACATION, '', text).strip()
@@ -606,23 +616,24 @@ if not master_db.empty:
                     return pd.Series(['제외', 0.0])
                     
                 if re.search(PATTERN_OUTING, text):
-                    hrs = calc_duration(times[0], times[1], rounding_mode="ceil") if len(times) >= 2 else 0.0
+                    hrs = _calc_geuntae_duration(times[0], times[1], rounding_mode="ceil") if len(times) >= 2 else 0.0
                     return pd.Series(['외출', hrs])
                     
                 if re.search(PATTERN_LATE, text):
-                    hrs = calc_duration(500, times[0], rounding_mode="ceil") if len(times) >= 1 else 0.0
+                    hrs = _calc_geuntae_duration(500, times[0], rounding_mode="ceil") if len(times) >= 1 else 0.0
                     return pd.Series(['지각', hrs])
                     
                 if re.search(PATTERN_EARLY, text):
                     if len(times) >= 1:
                         end_time = 1020 if is_friday else 1080 
-                        hrs = calc_duration(times[0], end_time)
+                        hrs = _calc_geuntae_duration(times[0], end_time)
                     else: hrs = 0.0
                     return pd.Series(['조퇴', hrs])
                     
                 return pd.Series(['기타', 0.0])
 
             df_geuntae[['구분', '시간(h)']] = df_geuntae.apply(calculate_geuntae, axis=1)
+            df_geuntae = df_geuntae.drop(columns=['_weekday'])
             df_geuntae = df_geuntae[~df_geuntae['구분'].isin(['기타', '제외'])]
 
             if not df_geuntae.empty:
